@@ -1,0 +1,128 @@
+## Predicting correct execution of weight lifting exercises
+
+```{r reading the file, cache=TRUE, echo=FALSE}
+library(knitr)
+opts_chunk$set(cache=TRUE, warning=FALSE)
+```
+
+
+### Summary
+
+Having an application displaying if an specific exercise is executed correctly can be very useful for sports practitioners. Using data from [Groupware@LES](http://groupware.les.inf.puc-rio.br/), which recorded the execution of weight lifting from six participant perfoming the activity in different ways.
+
+A random forest was used with as separated cross-validation set to evaluate the predictions. An 0.02% out of sample error rate was achieved.
+
+
+### The data. Exploratory analysis
+
+```{r, echo=FALSE, cache=TRUE}
+library(caret)
+library(ggplot2)
+```
+
+The data is composed of 19622 observations and 160 features. The most part of them are meassurements from a gyroscope and an accelerometer derived from different movements of the participants. The features corresponding to a aggregation of this meassurements are mostly NAs or blank spaces. There are five different ways of performing an exercise (one of them is correct) labeled in the variable "classe" as A, B, C, D, E.
+
+```{r, cache=TRUE}
+training<-read.csv("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", nrows=20)
+head(training[,grep("avg", names(training))],10)
+```
+So, the data is readed specifying blank spaces as NAs. 
+
+```{r, cache=TRUE}
+training<-read.csv("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", na.strings=c(NA, ""))
+missing_values<-sum(is.na(training))
+
+```
+There is a total of `r missing_values` missing values. The total number of missing values in each column happens to be always the same: 19216 (sample of the output below), this is, about a 98% of the total number of observations. We opt for removing these features.
+
+```{r, cache=TRUE}
+apply(training, 2, function(x){sum(is.na(x))})[sample(1:20)]
+nonNAcolumns<-names(training)[apply(training, 2, function(x) sum(is.na(x)))<19216]
+training<-training[,nonNAcolumns]
+```
+Some other variables are removed from the data set: the first one, "X", which is row identifier; the user name, and the date/time and timestamp related variables. The date/time variable is almost perfectly correlated with the user.It identifies the day and time when the activity was recorded. We cannot extract useful information from the
+timestamp variables. So we remove them all.
+
+```{r, cache=TRUE}
+with(training, table(user_name, cvtd_timestamp))
+training<-training[,-c(1,3:5)]
+```
+
+
+#### Data partition
+
+The data is splited in a training set and a cross validation set. The cross validation set will be divided into 10 folds
+```{r data partition, cache=TRUE}
+set.seed(121)
+inTrain<-createDataPartition(y=training$classe, p=0.7, list=FALSE)
+training<-training[inTrain,]
+cv<-training[-inTrain,]
+```
+
+
+#### Extreme values
+
+Some extreme values were found in the data set, wich are represented in the figure below. These extreme values make more difficult (or impossible) the task of visually identifying patterns in the data. Observations corresponding to the extreme values are removed from the data set.
+
+```{r, fig.height=6, fig.width=10}
+par(mfrow=c(2,4))
+for (idx in c(34, 35, 36, 41, 46, 47, 48, 49)){
+  plot(training[,idx], main=names(training)[idx], ylab="")
+}
+extreme.obs<-c(which.min(training[,34]),
+  which.max(training[,35]),
+  which.max(training[,36]),
+  which.max(training[,37]),
+  which.min(training[,41]),
+  which.max(training[,46]),
+  which.min(training[,47]),
+  which.max(training[,48]),
+  which.max(training[,49]))
+training<-training[-unique(extreme.obs),]
+```
+
+
+#### Patterns in the data
+
+In order to reduce the computational time, a subset of features in the data set are used in the model. The most significative patterns found are plotted bellow.   indexed Scatter plots colored by "classe" are used. The data is already ordered acording to "classe", so we can visualize patterns without previous sorting.
+
+```{r patterns, fig.height=10, fig.width=10}
+par(mfrow=c(3,4))
+title=1
+for (idx in c(4,7,9,10,13,15,20,35,37,38,44)){
+  plot(training[,idx], col=training$classe, main=title)
+  title=title+1
+}
+```
+As we cas see is easy to find patterns which distinguish the two tones of blue (clases D and E) from the rest. We can also find patters which distinguish the B class (color red) from the rest in figures 8 and 9. Class A (color black) is also different from the rest in figures 7, 10, and 11. No clear patters were found for classe C (color green).
+
+
+### Model
+
+A random forest is built with the features selected (Note: I didn't use the caret package because for some reason my computer can handle this prediction algorithm with the caret package, even when I use a very reduced number of features).
+
+``` {r model, cache=TRUE}
+library(randomForest)
+modFit<-randomForest(classe~., data=training)
+modFit
+```
+As one can see from the confusion matrix, the error rate in the training set is a very low one: `r 1-with(modFit,sum(diag(confusion))/sum(confusion))`. However this is an optimistic estimation of the error of the model. Now we confront the model predictions with a cross validation set. First we split the data of this set into 5 folds. Then we predict the model on that 5 folds and create 5 confusion matrices
+
+```{r create folds, cache=TRUE}
+folds<-createFolds(y=cv$classe, k=5, returnTrain=FALSE)
+matr<-list(vector("list",5))
+for (idx in 1:5){
+classe.cv<-cv[folds[[idx]],"classe"]
+cross<-cv[folds[[idx]],-56]
+pred<-predict(modFit, cross)
+conf<-table(pred, classe.cv)
+matr[[idx]]<-conf}
+matr
+```
+
+As can be seen in the confusion matrices,there is only one classification error. In matrix 3, one observation is predicted to be in class E when, in fact belongs to class A.That give us a 0.02% error rate in the cross validation set. This is the expected error rate for predictions using this model.
+
+
+### Conclusions
+
+A 0.02% out of sample error rate may seem quite impossible. However, the error rate from the training set is 0.2%. In any case, here is the report for anyone who could be interested in reproducing the analysis. If there are no errors in the procedure, this is undoubtedly a very good algorithm for predicting when a correct execution of the weight lifting exercise is performed.
